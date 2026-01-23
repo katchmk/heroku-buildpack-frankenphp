@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# bin/release <build-dir>
+#
+# Outputs default process types for FrankenPHP deployment.
+
+cat << EOF
+---
+addons: []
+default_process_types:
+  web: .heroku/frankenphp/bin/frankenphp run --config Caddyfile
+EOF

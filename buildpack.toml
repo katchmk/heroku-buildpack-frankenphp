@@ -1,0 +1,13 @@
+# Buildpack API version
+api = "0.2"
+
+[buildpack]
+id = "heroku/frankenphp"
+version = "0.1.0"
+name = "FrankenPHP"
+homepage = "https://github.com/heroku/heroku-buildpack-frankenphp"
+description = "Heroku buildpack for FrankenPHP - a modern PHP application server"
+keywords = ["php", "frankenphp", "caddy", "heroku"]
+
+[[buildpack.licenses]]
+type = "MIT"

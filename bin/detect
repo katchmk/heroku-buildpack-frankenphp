@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# bin/detect <build-dir>
+#
+# Detects PHP applications suitable for FrankenPHP deployment.
+
+set -e
+
+BUILD_DIR="${1}"
+
+# Check for composer.json or index.php
+if [[ -f "${BUILD_DIR}/composer.json" ]] || [[ -f "${BUILD_DIR}/index.php" ]]; then
+    echo "FrankenPHP"
+    exit 0
+fi
+
+# Check for any PHP files in the root
+if ls "${BUILD_DIR}"/*.php 1> /dev/null 2>&1; then
+    echo "FrankenPHP"
+    exit 0
+fi
+
+echo "no"
+exit 1

@@ -1,0 +1,46 @@
+# Caddyfile optimized for Laravel applications on Heroku
+#
+# Copy this file to your project root as 'Caddyfile' and customize as needed.
+
+{
+    auto_https off
+    http_port {$PORT}
+
+    frankenphp {
+        # Enable worker mode for Laravel Octane compatibility
+        # This keeps your application in memory for improved performance
+        worker /app/public/index.php {
+            # Number of workers (adjust based on your dyno size)
+            num {$FRANKENPHP_WORKERS:2}
+        }
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}
+
+:{$PORT} {
+    root * /app/public
+
+    encode zstd gzip
+
+    # Handle Laravel's pretty URLs
+    php_server
+
+    # Security headers
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # Serve static assets with caching
+    @static {
+        path *.css *.js *.ico *.gif *.jpg *.jpeg *.png *.svg *.woff *.woff2
+    }
+    header @static Cache-Control "public, max-age=31536000"
+}

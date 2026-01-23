@@ -1,0 +1,36 @@
+# Default Caddyfile for FrankenPHP on Heroku
+#
+# This file is used as a template when no Caddyfile is provided.
+# Copy this to your project root and customize as needed.
+
+{
+    # Heroku provides SSL termination at the router level
+    auto_https off
+
+    # Use PORT environment variable provided by Heroku
+    http_port {$PORT}
+
+    frankenphp {
+        # Worker mode for better performance with frameworks like Laravel/Symfony
+        # Uncomment the following line and adjust the path to your entry point:
+        # worker /app/public/index.php
+    }
+
+    # Logging
+    log {
+        output stdout
+        format console
+    }
+}
+
+:{$PORT} {
+    # Set document root
+    # Adjust this based on your application structure
+    root * /app/public
+
+    # Enable compression
+    encode zstd gzip
+
+    # PHP server directive - serves PHP files and falls back to index.php
+    php_server
+}

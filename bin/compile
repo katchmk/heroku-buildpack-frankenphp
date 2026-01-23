@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# bin/compile <build-dir> <cache-dir> <env-dir>
+#
+# Compiles a PHP application for deployment with FrankenPHP.
+
+set -eo pipefail
+
+BUILD_DIR="${1}"
+CACHE_DIR="${2}"
+ENV_DIR="${3}"
+
+# Load utilities
+BIN_DIR=$(cd "$(dirname "$0")"; pwd)
+source "${BIN_DIR}/../lib/utils.sh"
+
+# Configuration
+FRANKENPHP_VERSION="${FRANKENPHP_VERSION:-latest}"
+FRANKENPHP_BINARY_URL=""
+
+# Build output functions
+indent() {
+    sed -u 's/^/       /'
+}
+
+puts_step() {
+    echo "-----> $*"
+}
+
+puts_warn() {
+    echo " !     $*" >&2
+}
+
+# Export environment variables from env dir
+export_env_dir() {
+    local env_dir=$1
+    local allowlist_regex=${2:-''}
+    local denylist_regex=${3:-'^(PATH|GIT_DIR|CPATH|CPPATH|LD_PRELOAD|LIBRARY_PATH)$'}
+
+    if [[ -d "$env_dir" ]]; then
+        for e in $(ls "$env_dir"); do
+            echo "$e" | grep -E "$denylist_regex" && continue
+            if [[ -z "$allowlist_regex" ]] || echo "$e" | grep -qE "$allowlist_regex"; then
+                export "$e=$(cat "$env_dir/$e")"
+            fi
+        done
+    fi
+}
+
+# Get FrankenPHP download URL
+get_frankenphp_url() {
+    local version=$1
+
+    if [[ "$version" == "latest" ]]; then
+        # Get latest release URL from GitHub API
+        local release_info
+        release_info=$(curl -sL "https://api.github.com/repos/php/frankenphp/releases/latest")
+        FRANKENPHP_BINARY_URL=$(echo "$release_info" | grep -o '"browser_download_url": *"[^"]*frankenphp-linux-x86_64"' | head -1 | sed 's/.*: *"\([^"]*\)"/\1/')
+    else
+        FRANKENPHP_BINARY_URL="https://github.com/php/frankenphp/releases/download/${version}/frankenphp-linux-x86_64"
+    fi
+
+    if [[ -z "$FRANKENPHP_BINARY_URL" ]]; then
+        puts_warn "Failed to determine FrankenPHP download URL"
+        exit 1
+    fi
+}
+
+# Download FrankenPHP binary
+download_frankenphp() {
+    local cache_file="${CACHE_DIR}/frankenphp-${FRANKENPHP_VERSION}"
+
+    if [[ -f "$cache_file" ]]; then
+        puts_step "Using cached FrankenPHP binary"
+        cp "$cache_file" "${BUILD_DIR}/.heroku/frankenphp/bin/frankenphp"
+    else
+        puts_step "Downloading FrankenPHP ${FRANKENPHP_VERSION}..."
+        get_frankenphp_url "$FRANKENPHP_VERSION"
+
+        mkdir -p "${BUILD_DIR}/.heroku/frankenphp/bin"
+
+        if ! curl -sL "$FRANKENPHP_BINARY_URL" -o "${BUILD_DIR}/.heroku/frankenphp/bin/frankenphp"; then
+            puts_warn "Failed to download FrankenPHP"
+            exit 1
+        fi
+
+        # Cache for future builds
+        mkdir -p "$CACHE_DIR"
+        cp "${BUILD_DIR}/.heroku/frankenphp/bin/frankenphp" "$cache_file"
+    fi
+
+    chmod +x "${BUILD_DIR}/.heroku/frankenphp/bin/frankenphp"
+}
+
+# Install Composer dependencies
+install_composer_deps() {
+    if [[ ! -f "${BUILD_DIR}/composer.json" ]]; then
+        puts_step "No composer.json found, skipping Composer install"
+        return
+    fi
+
+    puts_step "Installing Composer dependencies..."
+
+    cd "$BUILD_DIR"
+
+    # Use FrankenPHP's built-in PHP for Composer
+    export PATH="${BUILD_DIR}/.heroku/frankenphp/bin:$PATH"
+
+    # Download Composer if not present
+    if [[ ! -f "${BUILD_DIR}/.heroku/frankenphp/bin/composer" ]]; then
+        puts_step "Downloading Composer..."
+        curl -sS https://getcomposer.org/installer | frankenphp php-cli -- --install-dir="${BUILD_DIR}/.heroku/frankenphp/bin" --filename=composer
+    fi
+
+    # Install dependencies
+    if [[ -f "${BUILD_DIR}/composer.lock" ]]; then
+        frankenphp php-cli "${BUILD_DIR}/.heroku/frankenphp/bin/composer" install --no-dev --optimize-autoloader --no-interaction 2>&1 | indent
+    else
+        frankenphp php-cli "${BUILD_DIR}/.heroku/frankenphp/bin/composer" install --no-dev --optimize-autoloader --no-interaction 2>&1 | indent
+    fi
+}
+
+# Setup default Caddyfile if not present
+setup_caddyfile() {
+    if [[ -f "${BUILD_DIR}/Caddyfile" ]]; then
+        puts_step "Using existing Caddyfile"
+        return
+    fi
+
+    puts_step "Creating default Caddyfile..."
+
+    # Determine document root
+    local doc_root=""
+    if [[ -d "${BUILD_DIR}/public" ]]; then
+        doc_root="/app/public"
+    elif [[ -d "${BUILD_DIR}/web" ]]; then
+        doc_root="/app/web"
+    else
+        doc_root="/app"
+    fi
+
+    cat > "${BUILD_DIR}/Caddyfile" << EOF
+{
+    # Heroku provides SSL termination at the router level
+    auto_https off
+
+    # Use PORT environment variable
+    http_port {\$PORT}
+
+    frankenphp {
+        # Enable worker mode for better performance (optional)
+        # worker /app/public/index.php
+    }
+}
+
+:\$PORT {
+    root * ${doc_root}
+
+    # Encode responses
+    encode zstd gzip
+
+    # Try PHP files first, then static files, then index.php
+    php_server
+}
+EOF
+}
+
+# Setup Procfile if not present
+setup_procfile() {
+    if [[ -f "${BUILD_DIR}/Procfile" ]]; then
+        puts_step "Using existing Procfile"
+        return
+    fi
+
+    puts_step "Creating default Procfile..."
+    cat > "${BUILD_DIR}/Procfile" << 'EOF'
+web: .heroku/frankenphp/bin/frankenphp run --config Caddyfile
+EOF
+}
+
+# Setup profile.d script for runtime
+setup_profile() {
+    mkdir -p "${BUILD_DIR}/.profile.d"
+
+    cat > "${BUILD_DIR}/.profile.d/frankenphp.sh" << 'EOF'
+export PATH="$HOME/.heroku/frankenphp/bin:$PATH"
+EOF
+}
+
+# Main build process
+main() {
+    puts_step "FrankenPHP Buildpack"
+
+    # Export environment variables
+    export_env_dir "$ENV_DIR"
+
+    # Check for custom FrankenPHP version
+    if [[ -f "${ENV_DIR}/FRANKENPHP_VERSION" ]]; then
+        FRANKENPHP_VERSION=$(cat "${ENV_DIR}/FRANKENPHP_VERSION")
+        puts_step "Using FrankenPHP version: ${FRANKENPHP_VERSION}"
+    fi
+
+    # Create build directories
+    mkdir -p "${BUILD_DIR}/.heroku/frankenphp/bin"
+    mkdir -p "$CACHE_DIR"
+
+    # Download and setup FrankenPHP
+    download_frankenphp
+
+    # Display PHP version info
+    puts_step "FrankenPHP/PHP version:"
+    "${BUILD_DIR}/.heroku/frankenphp/bin/frankenphp" version 2>&1 | indent || true
+
+    # Install Composer dependencies
+    install_composer_deps
+
+    # Setup configuration files
+    setup_caddyfile
+    setup_procfile
+    setup_profile
+
+    puts_step "Build complete!"
+}
+
+main "$@"
