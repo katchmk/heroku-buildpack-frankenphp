@@ -15,7 +15,9 @@ source "${BIN_DIR}/../lib/utils.sh"
 
 # Configuration
 FRANKENPHP_VERSION="${FRANKENPHP_VERSION:-latest}"
+FRANKENPHP_BINARY_TYPE="${FRANKENPHP_BINARY_TYPE:-musl}"  # musl (static) or gnu (dynamic extensions)
 FRANKENPHP_BINARY_URL=""
+FRANKENPHP_CUSTOM_BINARY_URL="${FRANKENPHP_CUSTOM_BINARY_URL:-}"
 
 # Build output functions
 indent() {
@@ -49,14 +51,31 @@ export_env_dir() {
 # Get FrankenPHP download URL
 get_frankenphp_url() {
     local version=$1
+    local binary_type=$2
+
+    # Use custom URL if provided
+    if [[ -n "$FRANKENPHP_CUSTOM_BINARY_URL" ]]; then
+        FRANKENPHP_BINARY_URL="$FRANKENPHP_CUSTOM_BINARY_URL"
+        puts_step "Using custom FrankenPHP binary URL"
+        return
+    fi
+
+    # Determine binary suffix based on type
+    local binary_suffix="frankenphp-linux-x86_64"
+    if [[ "$binary_type" == "gnu" ]]; then
+        binary_suffix="frankenphp-linux-x86_64-gnu"
+        puts_step "Using glibc-based binary (supports dynamic extensions)"
+    else
+        puts_step "Using musl-based binary (static, no dynamic extensions)"
+    fi
 
     if [[ "$version" == "latest" ]]; then
         # Get latest release URL from GitHub API
         local release_info
         release_info=$(curl -sL "https://api.github.com/repos/php/frankenphp/releases/latest")
-        FRANKENPHP_BINARY_URL=$(echo "$release_info" | grep -o '"browser_download_url": *"[^"]*frankenphp-linux-x86_64"' | head -1 | sed 's/.*: *"\([^"]*\)"/\1/')
+        FRANKENPHP_BINARY_URL=$(echo "$release_info" | grep -o "\"browser_download_url\": *\"[^\"]*${binary_suffix}\"" | head -1 | sed 's/.*: *"\([^"]*\)"/\1/')
     else
-        FRANKENPHP_BINARY_URL="https://github.com/php/frankenphp/releases/download/${version}/frankenphp-linux-x86_64"
+        FRANKENPHP_BINARY_URL="https://github.com/php/frankenphp/releases/download/${version}/${binary_suffix}"
     fi
 
     if [[ -z "$FRANKENPHP_BINARY_URL" ]]; then
@@ -67,14 +86,20 @@ get_frankenphp_url() {
 
 # Download FrankenPHP binary
 download_frankenphp() {
-    local cache_file="${CACHE_DIR}/frankenphp-${FRANKENPHP_VERSION}"
+    local cache_file="${CACHE_DIR}/frankenphp-${FRANKENPHP_VERSION}-${FRANKENPHP_BINARY_TYPE}"
+
+    # If using custom URL, use a hash of the URL for cache key
+    if [[ -n "$FRANKENPHP_CUSTOM_BINARY_URL" ]]; then
+        local url_hash=$(echo "$FRANKENPHP_CUSTOM_BINARY_URL" | md5sum | cut -d' ' -f1)
+        cache_file="${CACHE_DIR}/frankenphp-custom-${url_hash}"
+    fi
 
     if [[ -f "$cache_file" ]]; then
         puts_step "Using cached FrankenPHP binary"
         cp "$cache_file" "${BUILD_DIR}/.heroku/frankenphp/bin/frankenphp"
     else
         puts_step "Downloading FrankenPHP ${FRANKENPHP_VERSION}..."
-        get_frankenphp_url "$FRANKENPHP_VERSION"
+        get_frankenphp_url "$FRANKENPHP_VERSION" "$FRANKENPHP_BINARY_TYPE"
 
         mkdir -p "${BUILD_DIR}/.heroku/frankenphp/bin"
 
@@ -177,12 +202,46 @@ web: .heroku/frankenphp/bin/frankenphp run --config Caddyfile
 EOF
 }
 
+# Setup PHP extensions directory and load extensions if using glibc binary
+setup_extensions() {
+    mkdir -p "${BUILD_DIR}/.heroku/frankenphp/ext"
+    mkdir -p "${BUILD_DIR}/.heroku/frankenphp/conf.d"
+
+    # Check for user-provided extensions in the app
+    if [[ -d "${BUILD_DIR}/.php-extensions" ]]; then
+        puts_step "Installing custom PHP extensions..."
+        cp "${BUILD_DIR}/.php-extensions"/*.so "${BUILD_DIR}/.heroku/frankenphp/ext/" 2>/dev/null || true
+
+        # Create ini files for each extension
+        for ext in "${BUILD_DIR}/.heroku/frankenphp/ext"/*.so; do
+            if [[ -f "$ext" ]]; then
+                local ext_name=$(basename "$ext" .so)
+                echo "extension=${ext_name}.so" > "${BUILD_DIR}/.heroku/frankenphp/conf.d/${ext_name}.ini"
+                puts_step "  - Loaded extension: ${ext_name}"
+            fi
+        done
+    fi
+
+    # Check for extension ini files
+    if [[ -d "${BUILD_DIR}/.php-extensions/conf.d" ]]; then
+        cp "${BUILD_DIR}/.php-extensions/conf.d"/*.ini "${BUILD_DIR}/.heroku/frankenphp/conf.d/" 2>/dev/null || true
+    fi
+}
+
 # Setup profile.d script for runtime
 setup_profile() {
     mkdir -p "${BUILD_DIR}/.profile.d"
 
     cat > "${BUILD_DIR}/.profile.d/frankenphp.sh" << 'EOF'
 export PATH="$HOME/.heroku/frankenphp/bin:$PATH"
+
+# PHP extension directory for glibc-based builds
+export PHP_INI_SCAN_DIR="$HOME/.heroku/frankenphp/conf.d"
+
+# Extension directory
+if [[ -d "$HOME/.heroku/frankenphp/ext" ]]; then
+    export PHP_EXTENSION_DIR="$HOME/.heroku/frankenphp/ext"
+fi
 EOF
 }
 
@@ -199,6 +258,17 @@ main() {
         puts_step "Using FrankenPHP version: ${FRANKENPHP_VERSION}"
     fi
 
+    # Check for binary type (musl or gnu)
+    if [[ -f "${ENV_DIR}/FRANKENPHP_BINARY_TYPE" ]]; then
+        FRANKENPHP_BINARY_TYPE=$(cat "${ENV_DIR}/FRANKENPHP_BINARY_TYPE")
+    fi
+
+    # Check for custom binary URL (for custom builds with specific extensions)
+    if [[ -f "${ENV_DIR}/FRANKENPHP_CUSTOM_BINARY_URL" ]]; then
+        FRANKENPHP_CUSTOM_BINARY_URL=$(cat "${ENV_DIR}/FRANKENPHP_CUSTOM_BINARY_URL")
+        puts_step "Using custom FrankenPHP binary"
+    fi
+
     # Create build directories
     mkdir -p "${BUILD_DIR}/.heroku/frankenphp/bin"
     mkdir -p "$CACHE_DIR"
@@ -212,6 +282,11 @@ main() {
 
     # Install Composer dependencies
     install_composer_deps
+
+    # Setup extensions (for glibc-based builds)
+    if [[ "$FRANKENPHP_BINARY_TYPE" == "gnu" ]] || [[ -n "$FRANKENPHP_CUSTOM_BINARY_URL" ]]; then
+        setup_extensions
+    fi
 
     # Setup configuration files
     setup_caddyfile
