@@ -115,6 +115,20 @@ The buildpack sets `PHP_BINARY` to this command, so Composer scripts with `@php`
 
 Use `php` instead of `frankenphp php-cli` in your Procfile, release phase and scripts.
 
+### Custom Compile Step
+
+After `composer install`, the buildpack runs the `compile` script of your `composer.json` if it exists, like the `heroku/php` buildpack:
+
+```json
+{
+    "scripts": {
+        "compile": [
+            "@php bin/console assets:install public"
+        ]
+    }
+}
+```
+
 ### PHP Configuration
 
 Put `.ini` files in `.php-extensions/conf.d/` to change PHP settings, for example `.php-extensions/conf.d/custom.ini`:
@@ -125,6 +139,8 @@ upload_max_filesize = 20M
 ```
 
 These settings apply to the web server, the `php` command and Composer, with the `gnu` and the `musl` binary. To change settings for the web server only, you can also use the `php_ini` option in the `frankenphp` block of your `Caddyfile`.
+
+FrankenPHP also loads a `php.ini` file in the root of your project automatically. If that file has settings for local development (for example `display_errors = On`), override them with an `.ini` file in `.php-extensions/conf.d/`: PHP reads those files after `php.ini`.
 
 ## Framework-Specific Setup
 
