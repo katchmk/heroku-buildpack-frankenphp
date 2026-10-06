@@ -1,11 +1,9 @@
-# Buildpack API version
-api = "0.2"
+# Metadata of this classic Heroku buildpack (bin/detect, bin/compile, bin/release)
 
 [buildpack]
-id = "heroku/frankenphp"
-version = "0.1.0"
 name = "FrankenPHP"
-homepage = "https://github.com/heroku/heroku-buildpack-frankenphp"
+version = "0.2.0"
+homepage = "https://github.com/katchmk/heroku-buildpack-frankenphp"
 description = "Heroku buildpack for FrankenPHP - a modern PHP application server"
 keywords = ["php", "frankenphp", "caddy", "heroku"]
 

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# "php" command of the FrankenPHP buildpack.
+#
+# Runs "frankenphp php-cli" through php-cli.php, which accepts the common
+# options of the php binary and gives scripts the same $argv as the php binary.
+# The buildpack installs this file as .heroku/frankenphp/bin/php.
+
+dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+exec "${dir}/frankenphp" php-cli "${dir}/../lib/php-cli.php" "$@"

@@ -1,65 +1,53 @@
 #!/usr/bin/env bash
 # Utility functions for the FrankenPHP buildpack
 
-# Output formatting
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# Log functions
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $*"
+# Build output functions
+indent() {
+    sed -u 's/^/       /'
 }
 
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $*" >&2
+puts_step() {
+    echo "-----> $*"
 }
 
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $*" >&2
+puts_warn() {
+    echo " !     $*" >&2
 }
 
-# Check if a command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
+puts_error() {
+    echo " !     ERROR: $*" >&2
 }
 
-# Download a file with retry logic
-download_with_retry() {
-    local url=$1
-    local output=$2
-    local max_attempts=${3:-3}
-    local attempt=1
+# Export environment variables from env dir
+export_env_dir() {
+    local env_dir=$1
+    local allowlist_regex=${2:-''}
+    local denylist_regex=${3:-'^(PATH|GIT_DIR|CPATH|CPPATH|LD_PRELOAD|LIBRARY_PATH)$'}
 
-    while [[ $attempt -le $max_attempts ]]; do
-        if curl -sL "$url" -o "$output"; then
-            return 0
-        fi
-        log_warn "Download attempt $attempt failed, retrying..."
-        ((attempt++))
-        sleep 2
-    done
-
-    log_error "Failed to download after $max_attempts attempts"
-    return 1
-}
-
-# Calculate checksum of a file
-file_checksum() {
-    local file=$1
-    if command_exists sha256sum; then
-        sha256sum "$file" | cut -d' ' -f1
-    elif command_exists shasum; then
-        shasum -a 256 "$file" | cut -d' ' -f1
-    else
-        md5sum "$file" | cut -d' ' -f1
+    if [[ -d "$env_dir" ]]; then
+        local file e
+        for file in "$env_dir"/*; do
+            [[ -f "$file" ]] || continue
+            e=$(basename "$file")
+            echo "$e" | grep -qE "$denylist_regex" && continue
+            if [[ -z "$allowlist_regex" ]] || echo "$e" | grep -qE "$allowlist_regex"; then
+                export "$e=$(cat "$file")"
+            fi
+        done
     fi
 }
 
-# Get JSON value from string (basic parsing)
-json_value() {
-    local json=$1
-    local key=$2
-    echo "$json" | grep -o "\"$key\": *\"[^\"]*\"" | head -1 | sed 's/.*: *"\([^"]*\)"/\1/'
+# Download a URL to a file. Fails on HTTP errors and retries transient errors.
+download() {
+    local url=$1
+    local output=$2
+
+    curl --fail --silent --show-error --location \
+        --retry 3 --retry-connrefused --connect-timeout 10 \
+        "$url" --output "$output"
+}
+
+# Print the SHA-256 checksum of a file
+sha256_of() {
+    sha256sum "$1" | cut -d' ' -f1
 }

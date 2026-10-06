@@ -1,44 +1,54 @@
 # Caddyfile optimized for Symfony applications on Heroku
 #
 # Copy this file to your project root as 'Caddyfile' and customize as needed.
-
+#
+# Worker mode works without more configuration on Symfony 7.4 and later.
+# On older versions, install runtime/frankenphp-symfony and set this config var:
+#   heroku config:set APP_RUNTIME='Runtime\FrankenPhpSymfony\Runtime'
 {
-    auto_https off
-    http_port {$PORT}
+	auto_https off
+	http_port {$PORT}
 
-    frankenphp {
-        # Enable worker mode for Symfony Runtime compatibility
-        worker /app/public/index.php {
-            num {$FRANKENPHP_WORKERS:2}
-        }
-    }
+	frankenphp {
+		# Keep the Symfony kernel in memory between requests
+		worker {
+			file /app/public/index.php
+			num {$FRANKENPHP_WORKERS:2}
+		}
+	}
 
-    log {
-        output stdout
-        format console
-    }
+	log {
+		output stdout
+		format console
+	}
 }
 
 :{$PORT} {
-    root * /app/public
+	root * /app/public
 
-    encode zstd gzip
+	# Do not serve hidden files (.env, .git, ...)
+	@hidden {
+		path_regexp "(^|/)\."
+		not path /.well-known/*
+	}
+	respond @hidden 404
 
-    # Symfony front controller pattern
-    php_server
+	encode zstd gzip
 
-    # Security headers
-    header {
-        X-Frame-Options "SAMEORIGIN"
-        X-Content-Type-Options "nosniff"
-        X-XSS-Protection "1; mode=block"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        -Server
-    }
+	# Symfony front controller pattern
+	php_server
 
-    # Cache static assets
-    @static {
-        path /bundles/* *.css *.js *.ico *.gif *.jpg *.jpeg *.png *.svg *.woff *.woff2
-    }
-    header @static Cache-Control "public, max-age=31536000"
+	# Security headers
+	header {
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# Cache static assets
+	@static {
+		path /bundles/* *.css *.js *.ico *.gif *.jpg *.jpeg *.png *.svg *.woff *.woff2
+	}
+	header @static Cache-Control "public, max-age=31536000"
 }

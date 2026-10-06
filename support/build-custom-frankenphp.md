@@ -11,19 +11,22 @@ This guide explains how to build a custom FrankenPHP binary with specific PHP ex
 ## Quick Start
 
 ```bash
-# Clone FrankenPHP
-git clone https://github.com/php/frankenphp
+# Clone the FrankenPHP release that you want to use
+git clone --branch v1.13.0 https://github.com/php/frankenphp
 cd frankenphp
 
 # Build with your extensions
 docker buildx bake --load \
-  --set static-builder-musl.args.PHP_EXTENSIONS="opcache,pdo_mysql,pdo_pgsql,redis,gd,intl" \
-  static-builder-musl
+  --set '*.platform=linux/amd64' \
+  --set static-builder-gnu.args.PHP_EXTENSIONS="opcache,pdo_mysql,pdo_pgsql,redis,gd,intl" \
+  static-builder-gnu
 
 # Extract the binary
-docker cp $(docker create --name sb dunglas/frankenphp:static-builder-musl):/go/src/app/dist/frankenphp-linux-x86_64 ./frankenphp
+docker cp $(docker create --name sb dunglas/frankenphp:static-builder-gnu):/go/src/app/dist/frankenphp-linux-x86_64 ./frankenphp
 docker rm sb
 ```
+
+Heroku dynos use `linux/amd64`. The `--set '*.platform=linux/amd64'` option makes sure that you get an x86_64 binary, also on an Apple Silicon Mac.
 
 ## Available Extensions
 
@@ -49,25 +52,26 @@ opcache,pdo_mysql,pdo_pgsql,redis,curl,json,mbstring,sodium
 
 ## Build Options
 
+### glibc-Based (Mostly Static)
+- Requires glibc 2.17+ (all Heroku stacks have it)
+- Can load dynamic extensions at runtime
+- Faster than musl, especially with many threads
+- Best for production ([FrankenPHP performance docs](https://frankenphp.dev/docs/performance/))
+
+```bash
+docker buildx bake --load --set '*.platform=linux/amd64' static-builder-gnu
+```
+
 ### musl-Based (Fully Static)
 - No runtime dependencies
 - Cannot load dynamic extensions
-- Smaller binary size
-- Best for production
+- PHP is slower with musl in thread-safe (ZTS) mode, which FrankenPHP uses
 
 ```bash
-docker buildx bake --load static-builder-musl
+docker buildx bake --load --set '*.platform=linux/amd64' static-builder-musl
 ```
 
-### glibc-Based (Mostly Static)
-- Requires glibc 2.17+
-- Can load dynamic extensions at runtime
-- Larger binary size
-- Good for development or when you need runtime extension loading
-
-```bash
-docker buildx bake --load static-builder-gnu
-```
+The commands in this guide use `static-builder-gnu`. For a musl build, use `static-builder-musl` in the `--set` options, the target name and the image name.
 
 ## Adding Extra Libraries
 
@@ -76,21 +80,25 @@ Some extensions need additional libraries for full functionality:
 ```bash
 docker buildx bake \
   --load \
-  --set static-builder-musl.args.PHP_EXTENSIONS=gd \
-  --set static-builder-musl.args.PHP_EXTENSION_LIBS=libjpeg,libpng,libwebp,freetype \
-  static-builder-musl
+  --set '*.platform=linux/amd64' \
+  --set static-builder-gnu.args.PHP_EXTENSIONS=gd \
+  --set static-builder-gnu.args.PHP_EXTENSION_LIBS=libjpeg,libpng,libwebp,freetype \
+  static-builder-gnu
 ```
 
 ## Adding Caddy Modules
 
-Include additional Caddy modules like caching or Mercure:
+Include additional Caddy modules like caching:
 
 ```bash
 docker buildx bake \
   --load \
-  --set static-builder-musl.args.XCADDY_ARGS="--with github.com/darkweak/souin/plugins/caddy" \
-  static-builder-musl
+  --set '*.platform=linux/amd64' \
+  --set static-builder-gnu.args.XCADDY_ARGS="--with github.com/darkweak/souin/plugins/caddy --with github.com/dunglas/caddy-cbrotli --with github.com/dunglas/mercure/caddy --with github.com/dunglas/vulcain/caddy" \
+  static-builder-gnu
 ```
+
+The default build includes the cbrotli, Mercure and Vulcain modules. When you set `XCADDY_ARGS`, include them again (as above) if you need them.
 
 ## Hosting Your Binary
 
@@ -104,6 +112,8 @@ docker buildx bake \
 ```bash
 heroku config:set FRANKENPHP_CUSTOM_BINARY_URL="https://github.com/YOUR_USER/YOUR_REPO/releases/download/v1.0.0/frankenphp-linux-x86_64"
 ```
+
+The buildpack caches the binary by its URL. To deploy a new binary, upload it with a new URL (for example, in a new release).
 
 ### Amazon S3
 
@@ -124,11 +134,13 @@ Test the binary locally (requires Linux or Docker):
 ./frankenphp version
 
 # List extensions
-./frankenphp php-cli -m
+./frankenphp php-cli -r 'echo implode(PHP_EOL, get_loaded_extensions()), PHP_EOL;'
 
 # Check specific extension
 ./frankenphp php-cli -r "echo extension_loaded('redis') ? 'redis loaded' : 'redis not loaded';"
 ```
+
+On Heroku, the buildpack also adds a `php` command, so you can use `heroku run php -m`.
 
 ## Troubleshooting
 
@@ -140,8 +152,7 @@ Check if the extension is supported: https://static-php.dev/en/guide/extensions.
 
 ### Binary too large
 - Use fewer extensions
-- Enable UPX compression (default)
-- Use musl instead of glibc
+- Enable UPX compression with `--set static-builder-gnu.args.COMPRESS=1` (UPX is off by default)
 
 ### Missing library functions
 Add required libraries via `PHP_EXTENSION_LIBS`.
@@ -155,17 +166,17 @@ set -e
 EXTENSIONS="opcache,pdo_mysql,pdo_pgsql,redis,gd,intl,bcmath,mbstring,xml,zip,curl,sodium,fileinfo"
 LIBS="libjpeg,libpng,libwebp,freetype,icu"
 
-git clone https://github.com/php/frankenphp
+git clone --branch v1.13.0 https://github.com/php/frankenphp
 cd frankenphp
 
 docker buildx bake --load \
-  --set static-builder-musl.args.PHP_EXTENSIONS="$EXTENSIONS" \
-  --set static-builder-musl.args.PHP_EXTENSION_LIBS="$LIBS" \
-  static-builder-musl
+  --set '*.platform=linux/amd64' \
+  --set static-builder-gnu.args.PHP_EXTENSIONS="$EXTENSIONS" \
+  --set static-builder-gnu.args.PHP_EXTENSION_LIBS="$LIBS" \
+  static-builder-gnu
 
-docker cp $(docker create --name sb dunglas/frankenphp:static-builder-musl):/go/src/app/dist/frankenphp-linux-x86_64 ../frankenphp-custom
+docker cp $(docker create --name sb dunglas/frankenphp:static-builder-gnu):/go/src/app/dist/frankenphp-linux-x86_64 ../frankenphp-custom
 docker rm sb
 
 echo "Build complete: ../frankenphp-custom"
-../frankenphp-custom php-cli -m
 ```
