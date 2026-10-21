@@ -6,7 +6,7 @@
  *
  * "frankenphp php-cli" does not parse the options of the php binary, and
  * FrankenPHP v1.13.0 puts the binary name in $argv[0] and the script in $argv[1]
- * (https://github.com/php/frankenphp/issues/2690). Composer, Symfony Console
+ * (https://github.com/php/frankenphp/issues/2690, fixed in v1.13.1). Composer, Symfony Console
  * and Laravel Artisan then fail with 'Command "..." is not defined'.
  *
  * This file parses the options, gives the script the $argv that the php binary
@@ -135,8 +135,8 @@ final class Cli
     }
 
     /**
-     * Returns the arguments after this file. Before FrankenPHP v1.13.0, this
-     * file is $argv[0]; in v1.13.0, it is $argv[1].
+     * Returns the arguments after this file. This file is $argv[0], except in
+     * FrankenPHP v1.13.0, where it is $argv[1].
      */
     private static function argsAfterSelf(array $rawArgv): array
     {

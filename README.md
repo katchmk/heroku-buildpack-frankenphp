@@ -70,7 +70,7 @@ Use `{$PORT}` (with the braces) for the port. Caddy does not read `$PORT`.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `FRANKENPHP_VERSION` | FrankenPHP release to install, for example `v1.13.0` (the `v` is optional), or `latest` | `v1.13.0` |
+| `FRANKENPHP_VERSION` | FrankenPHP release to install, for example `v1.13.2` (the `v` is optional), or `latest` | `v1.13.2` |
 | `FRANKENPHP_BINARY_TYPE` | Binary type: `gnu` (glibc, can load dynamic extensions) or `musl` (fully static) | `gnu` |
 | `FRANKENPHP_CUSTOM_BINARY_URL` | URL to a custom FrankenPHP binary | - |
 | `FRANKENPHP_WORKERS` | Number of worker threads (used in `conf/Caddyfile.symfony`) | `2` |
@@ -78,7 +78,7 @@ Use `{$PORT}` (with the braces) for the port. Caddy does not read `$PORT`.
 Set environment variables using:
 
 ```bash
-heroku config:set FRANKENPHP_VERSION=v1.13.0
+heroku config:set FRANKENPHP_VERSION=v1.13.2
 heroku config:set FRANKENPHP_BINARY_TYPE=musl
 ```
 
@@ -108,7 +108,7 @@ heroku run composer show
 
 FrankenPHP does not include a separate `php` binary. The `php` command runs `frankenphp php-cli`, and it also:
 
-- gives scripts the same `$argv` as the `php` binary. FrankenPHP v1.13.0 puts its own name in `$argv[0]` ([php/frankenphp#2690](https://github.com/php/frankenphp/issues/2690)), so `frankenphp php-cli bin/console ...` fails with `Command "bin/console" is not defined`.
+- gives scripts the same `$argv` as the `php` binary, also with FrankenPHP v1.13.0. That release puts its own name in `$argv[0]` ([php/frankenphp#2690](https://github.com/php/frankenphp/issues/2690), fixed in v1.13.1), so `frankenphp php-cli bin/console ...` fails with `Command "bin/console" is not defined`.
 - accepts the common `php` options: `-r`, `-d`, `-f`, `-v`, `-m`, `-i` and `--ini`. It can also read a script from standard input.
 
 The buildpack sets `PHP_BINARY` to this command, so Composer scripts with `@php` (for example `@php artisan package:discover`) and PHP subprocesses work.
@@ -261,18 +261,19 @@ For production use, building a custom FrankenPHP binary with your required exten
 
 ```bash
 # Clone the FrankenPHP release that you want to use
-git clone --branch v1.13.0 https://github.com/php/frankenphp
+git clone --branch v1.13.2 https://github.com/php/frankenphp
 cd frankenphp
 
-# Build with specific extensions for Heroku (linux/amd64)
-docker buildx bake --load \
-  --set '*.platform=linux/amd64' \
-  --set static-builder-gnu.args.PHP_EXTENSIONS="opcache,pdo_mysql,redis,imagick,gd" \
-  static-builder-gnu
+# Build the builder image for Heroku (linux/amd64)
+docker buildx bake --load --set '*.platform=linux/amd64' static-builder-gnu
 
-# Extract the binary
-docker cp $(docker create --name static-builder dunglas/frankenphp:static-builder-gnu):/go/src/app/dist/frankenphp-linux-x86_64 ./frankenphp
-docker rm static-builder
+# Build the binary with specific extensions
+docker run --rm --platform linux/amd64 \
+  -v "$PWD/output:/output" -e OUTPUT_DIR=/output -e SPC_LOGS_DIR=/output/log \
+  -e PHP_EXTENSIONS="opcache,pdo_mysql,redis,imagick,gd" \
+  dunglas/frankenphp:static-builder-gnu
+
+cp output/frankenphp-linux-x86_64 ./frankenphp
 ```
 
 See [support/build-custom-frankenphp.md](support/build-custom-frankenphp.md) for more options.
@@ -337,7 +338,7 @@ Ensure you have a valid `composer.json` and `composer.lock` file committed to yo
 
 ### `Command "..." is not defined`
 
-You started a console script with `frankenphp php-cli`. With FrankenPHP v1.13.0, use the `php` command instead, for example `php bin/console` or `php artisan`.
+You started a console script with `frankenphp php-cli` and FrankenPHP v1.13.0. Use the `php` command instead, for example `php bin/console` or `php artisan`, or use FrankenPHP v1.13.1 or later.
 
 ### Extension not loading (gnu binary)
 

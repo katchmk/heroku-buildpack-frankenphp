@@ -12,26 +12,33 @@ This guide explains how to build a custom FrankenPHP binary with specific PHP ex
 
 ```bash
 # Clone the FrankenPHP release that you want to use
-git clone --branch v1.13.0 https://github.com/php/frankenphp
+git clone --branch v1.13.2 https://github.com/php/frankenphp
 cd frankenphp
 
-# Build with your extensions
-docker buildx bake --load \
-  --set '*.platform=linux/amd64' \
-  --set static-builder-gnu.args.PHP_EXTENSIONS="opcache,pdo_mysql,pdo_pgsql,redis,gd,intl" \
-  static-builder-gnu
+# Build the builder image
+docker buildx bake --load --set '*.platform=linux/amd64' static-builder-gnu
 
-# Extract the binary
-docker cp $(docker create --name sb dunglas/frankenphp:static-builder-gnu):/go/src/app/dist/frankenphp-linux-x86_64 ./frankenphp
-docker rm sb
+# Build the binary with your extensions
+docker run --rm --platform linux/amd64 \
+  -v "$PWD/output:/output" -e OUTPUT_DIR=/output -e SPC_LOGS_DIR=/output/log \
+  -e PHP_EXTENSIONS="opcache,pdo_mysql,pdo_pgsql,redis,gd,intl" \
+  dunglas/frankenphp:static-builder-gnu
+
+cp output/frankenphp-linux-x86_64 ./frankenphp
 ```
 
-Heroku dynos use `linux/amd64`. The `--set '*.platform=linux/amd64'` option makes sure that you get an x86_64 binary, also on an Apple Silicon Mac.
+Heroku dynos use `linux/amd64`. The `--set '*.platform=linux/amd64'` and `--platform linux/amd64` options make sure that you get an x86_64 binary, also on an Apple Silicon Mac.
+
+The build runs when the container starts. You give the build options (`PHP_EXTENSIONS`, `PHP_EXTENSION_LIBS`, `XCADDY_ARGS`, ...) to `docker run` with `-e`. You do not have to build the image again when you change them. If the build fails, the static-php-cli logs are in `output/log/`.
+
+FrankenPHP v1.13.1 and earlier used Docker build args (`--set static-builder-gnu.args.PHP_EXTENSIONS=...`) and wrote the binary into the image. To build one of these releases, follow the documentation of that release.
 
 ## Available Extensions
 
 For a full list of supported extensions, see:
 https://static-php.dev/en/guide/extensions.html
+
+The default extensions are in [`craft.yml`](https://github.com/php/frankenphp/blob/main/craft.yml).
 
 ### Common Extension Sets
 
@@ -53,7 +60,7 @@ opcache,pdo_mysql,pdo_pgsql,redis,curl,json,mbstring,sodium
 ## Build Options
 
 ### glibc-Based (Mostly Static)
-- Requires glibc 2.17+ (all Heroku stacks have it)
+- Requires glibc 2.28+ (all Heroku stacks have it)
 - Can load dynamic extensions at runtime
 - Faster than musl, especially with many threads
 - Best for production ([FrankenPHP performance docs](https://frankenphp.dev/docs/performance/))
@@ -71,19 +78,18 @@ docker buildx bake --load --set '*.platform=linux/amd64' static-builder-gnu
 docker buildx bake --load --set '*.platform=linux/amd64' static-builder-musl
 ```
 
-The commands in this guide use `static-builder-gnu`. For a musl build, use `static-builder-musl` in the `--set` options, the target name and the image name.
+The commands in this guide use `static-builder-gnu`. For a musl build, use `static-builder-musl` as the target name and the image name. Also add `--ulimit nofile=8192:8192` to `docker run`: the musl build opens many files.
 
 ## Adding Extra Libraries
 
 Some extensions need additional libraries for full functionality:
 
 ```bash
-docker buildx bake \
-  --load \
-  --set '*.platform=linux/amd64' \
-  --set static-builder-gnu.args.PHP_EXTENSIONS=gd \
-  --set static-builder-gnu.args.PHP_EXTENSION_LIBS=libjpeg,libpng,libwebp,freetype \
-  static-builder-gnu
+docker run --rm --platform linux/amd64 \
+  -v "$PWD/output:/output" -e OUTPUT_DIR=/output -e SPC_LOGS_DIR=/output/log \
+  -e PHP_EXTENSIONS=gd \
+  -e PHP_EXTENSION_LIBS=libjpeg,libpng,libwebp,freetype \
+  dunglas/frankenphp:static-builder-gnu
 ```
 
 ## Adding Caddy Modules
@@ -91,11 +97,10 @@ docker buildx bake \
 Include additional Caddy modules like caching:
 
 ```bash
-docker buildx bake \
-  --load \
-  --set '*.platform=linux/amd64' \
-  --set static-builder-gnu.args.XCADDY_ARGS="--with github.com/darkweak/souin/plugins/caddy --with github.com/dunglas/caddy-cbrotli --with github.com/dunglas/mercure/caddy --with github.com/dunglas/vulcain/caddy" \
-  static-builder-gnu
+docker run --rm --platform linux/amd64 \
+  -v "$PWD/output:/output" -e OUTPUT_DIR=/output -e SPC_LOGS_DIR=/output/log \
+  -e XCADDY_ARGS="--with github.com/darkweak/souin/plugins/caddy --with github.com/dunglas/caddy-cbrotli --with github.com/dunglas/mercure/caddy --with github.com/dunglas/vulcain/caddy" \
+  dunglas/frankenphp:static-builder-gnu
 ```
 
 The default build includes the cbrotli, Mercure and Vulcain modules. When you set `XCADDY_ARGS`, include them again (as above) if you need them.
@@ -147,12 +152,15 @@ On Heroku, the buildpack also adds a `php` command, so you can use `heroku run p
 ### Build fails with memory errors
 Increase Docker's memory limit to at least 4GB.
 
+### Build fails
+Read the static-php-cli logs in `output/log/`.
+
 ### Extension not available
 Check if the extension is supported: https://static-php.dev/en/guide/extensions.html
 
 ### Binary too large
 - Use fewer extensions
-- Enable UPX compression with `--set static-builder-gnu.args.COMPRESS=1` (UPX is off by default)
+- Enable UPX compression with `-e COMPRESS=1` in `docker run` (UPX is off by default)
 
 ### Missing library functions
 Add required libraries via `PHP_EXTENSION_LIBS`.
@@ -166,17 +174,18 @@ set -e
 EXTENSIONS="opcache,pdo_mysql,pdo_pgsql,redis,gd,intl,bcmath,mbstring,xml,zip,curl,sodium,fileinfo"
 LIBS="libjpeg,libpng,libwebp,freetype,icu"
 
-git clone --branch v1.13.0 https://github.com/php/frankenphp
+git clone --branch v1.13.2 https://github.com/php/frankenphp
 cd frankenphp
 
-docker buildx bake --load \
-  --set '*.platform=linux/amd64' \
-  --set static-builder-gnu.args.PHP_EXTENSIONS="$EXTENSIONS" \
-  --set static-builder-gnu.args.PHP_EXTENSION_LIBS="$LIBS" \
-  static-builder-gnu
+docker buildx bake --load --set '*.platform=linux/amd64' static-builder-gnu
 
-docker cp $(docker create --name sb dunglas/frankenphp:static-builder-gnu):/go/src/app/dist/frankenphp-linux-x86_64 ../frankenphp-custom
-docker rm sb
+docker run --rm --platform linux/amd64 \
+  -v "$PWD/output:/output" -e OUTPUT_DIR=/output -e SPC_LOGS_DIR=/output/log \
+  -e PHP_EXTENSIONS="$EXTENSIONS" \
+  -e PHP_EXTENSION_LIBS="$LIBS" \
+  dunglas/frankenphp:static-builder-gnu
+
+cp output/frankenphp-linux-x86_64 ../frankenphp-custom
 
 echo "Build complete: ../frankenphp-custom"
 ```

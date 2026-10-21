@@ -14,14 +14,14 @@ BP_DIR=$(cd "$(dirname "$0")/.."; pwd)
 source "${BP_DIR}/lib/utils.sh"
 
 # Defaults (override them with config vars of the same name)
-DEFAULT_FRANKENPHP_VERSION="v1.13.0"
+DEFAULT_FRANKENPHP_VERSION="v1.13.2"
 DEFAULT_FRANKENPHP_BINARY_TYPE="gnu"  # gnu (glibc, dynamic extensions) or musl (fully static)
 
 FRANKENPHP_DIR="${BUILD_DIR}/.heroku/frankenphp"
 FRANKENPHP_BIN="${FRANKENPHP_DIR}/bin/frankenphp"
 
 # Print the release tag for a version: "latest" becomes the newest release tag,
-# and "1.13.0" becomes "v1.13.0"
+# and "1.13.2" becomes "v1.13.2"
 resolve_frankenphp_version() {
     local version=$1
 
