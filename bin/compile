@@ -14,7 +14,7 @@ BP_DIR=$(cd "$(dirname "$0")/.."; pwd)
 source "${BP_DIR}/lib/utils.sh"
 
 # Defaults (override them with config vars of the same name)
-DEFAULT_FRANKENPHP_VERSION="v1.13.2"
+DEFAULT_FRANKENPHP_VERSION="v1.13.6"
 DEFAULT_FRANKENPHP_BINARY_TYPE="gnu"  # gnu (glibc, dynamic extensions) or musl (fully static)
 
 FRANKENPHP_DIR="${BUILD_DIR}/.heroku/frankenphp"
